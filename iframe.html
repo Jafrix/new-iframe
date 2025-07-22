@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+    <style>
+      :root {
+        --color-text: #333;
+        --color-back: #eee;
+        --color-back-second: red;
+      }
+
+      :root[data-theme="dark"] {
+        --color-text: #eee;
+        --color-back: #333;
+      }
+
+      :root {
+        margin: 0;
+        padding: 0;
+        background-color: var(--color-back-second);
+        color: var(--color-text);
+      }
+
+      .box {
+        padding: 1rem;
+      }
+    </style>
+    <script>
+      "use strict";
+
+      /**
+       * Пример реализации контроллера для взаимодействия iframe с окном основного приложения
+       */
+      class PostMessageController {
+        constructor(iframeId) {
+          this.disposables = [];
+
+          this.iframeId = iframeId;
+          this.shellOrigin = (
+            window.location?.ancestorOrigins?.[0] ||
+            document.referrer ||
+            ""
+          ).replace(/\/$/, "");
+
+          this.listemPostMessage = this.listenPostMessage.bind(this);
+          this.handlePostMessage = this.handlePostMessage.bind(this);
+          this.dispose = this.dispose.bind(this);
+          this.checkPostMessage = this.checkPostMessage.bind(this);
+
+          this.postHandshake = this.postHandshake.bind(this);
+          this.listenPortMessage = this.listenPortMessage.bind(this);
+          this.handleHandshakeAction = this.handleHandshakeAction.bind(this);
+          this.handlePortAction = this.handlePortAction.bind(this);
+
+          this.callOnActionWithId = this.callOnActionWithId.bind(this);
+          this.postPortMessage = this.postPortMessage.bind(this);
+        }
+
+        // запрос кода авторизации
+        getAuthCode(redirectUri, actionId) {
+          this?.port?.postMessage({
+            // обязательный параметр
+            action: "getAuthCode",
+            // не обязательный параметр, будет передан в ответе в том же виде
+            // можно использовать для отслеживания ответа именно на это сообщение
+            actionId,
+            // одна из ссылок для перенаправления, заданная вами при регистрации приложения
+            // не обязательна если, задана единственная ссылка
+            redirectUri,
+          });
+        }
+
+        // отправка сообщения-запроса на рукопожатие
+        postHandshake(actionId) {
+          if (this.iframeId) {
+            window.parent.postMessage(
+              {
+                action: "handshake",
+                iframeId: this.iframeId,
+                actionId,
+              },
+              this.shellOrigin
+            );
+          }
+        }
+
+        // проверка корректности сообщения
+        checkPostMessage(event) {
+          const eventData = event.data || {};
+
+          return (
+            event.origin === this.shellOrigin &&
+            !!eventData.action &&
+            eventData.iframeId === this.iframeId
+          );
+        }
+
+        // обработка события из порта MessageChannel
+        handlePortAction(event) {
+          const data = event?.data;
+
+          if (!data?.action || typeof data.action !== "string") return;
+
+          this?.onPortAction(data);
+        }
+
+        // прослушивание событий порта MessageChannel
+        listenPortMessage(newPort) {
+          if (!newPort || newPort === this.port) return;
+
+          if (this.port) {
+            this.port.removeEventListener("message", this.handlePortAction);
+          }
+
+          this.port = newPort;
+          this.port.addEventListener("message", this.handlePortAction);
+          this.port.start();
+        }
+
+        // обработка ответа от платформы на рукопожатие
+        // в payload будут находиться заданные вами данные при создании scrm-iframe-wrapper
+        handleHandshakeAction(event) {
+          const payload = event?.data?.payload;
+
+          // дальнейшее взаимодействие плаформой производится через полученный порт
+          this.listenPortMessage(event.ports[0]);
+
+          this?.onHandshakeAction(payload);
+        }
+
+        handlePostMessage(event) {
+          if (!this.checkPostMessage(event)) {
+            return;
+          }
+
+          if (event.data.action === "handshake") {
+            this.handleHandshakeAction(event);
+          }
+        }
+
+        dispose() {
+          this.disposables.forEach((item) => item.dispose());
+          this.disposables = [];
+        }
+
+        // подписка на событие message окна
+        listenPostMessage() {
+          this.dispose();
+
+          window.addEventListener("message", this.handlePostMessage);
+
+          this.disposables.push({
+            dispose: () =>
+              window.removeEventListener("message", this.handlePostMessage),
+          });
+        }
+
+        callOnActionWithId(actionId, callback) {
+          let disposable = {
+            dispose: () => {},
+          };
+
+          if (!this.port) {
+            return disposable;
+          }
+
+          // обработка события из порта MessageChannel
+          const handleAction = (event) => {
+            const eventData = event?.data;
+
+            if (!eventData || typeof event !== "object") return;
+
+            if (eventData.actionId === actionId) {
+              this.disposables = this.disposables.filter(
+                (item) => item !== disposable
+              );
+              disposable.dispose();
+              callback(eventData);
+            }
+          };
+
+          disposable.dispose = () =>
+            this.port?.removeEventListener("message", handleAction);
+
+          this.disposables.push(disposable);
+          this.port.addEventListener("message", handleAction);
+
+          return disposable;
+        }
+
+        postPortMessage(data) {
+          this?.port?.postMessage(data);
+        }
+      }
+
+      window.PostMessageController = PostMessageController;
+    </script>
+  </head>
+
+  <body class="box">
+    <p><b>appCode:</b> <span id="appCode">...загрузка данных</span></p>
+    <p><b>module:</b> <span id="module">...загрузка данных</span></p>
+    <p><b>plugPoint:</b> <span id="plugPoint">...загрузка данных</span></p>
+    <p><b>themeMode:</b> <span id="themeMode">...загрузка данных</span></p>
+    <button id="getAuthCodeButton">getAuthCode</button>
+    <button id="getEntitiesButton">getEntities</button>
+    <button id="getUserInfoButton">getUserInfo</button>
+    <button id="getActiveBusinessObjectButton">getActiveBusinessObject</button>
+    <button>Another one BTN</button>
+    <div id="output"></div>
+
+    <script>
+      "use strict";
+
+      let actionCounter = 0;
+      let appCode;
+      let themeMode;
+      let module;
+      let plugPoint;
+      let port;
+
+      let iframeId =
+        new URL(window.location.href).searchParams.get("iframeId") || "";
+
+      // используется в случае если iframe открывается через srcdoc
+      iframeId = iframeId || window.frameElement?.dataset?.iframeId || "";
+
+      const postMessageController = new window.PostMessageController(iframeId);
+      const { callOnActionWithId, postPortMessage } = postMessageController;
+
+      function getActionId() {
+        return ++actionCounter;
+      }
+
+      function setOutput(data) {
+        document.querySelector("#output").innerHTML = `<pre>${JSON.stringify(
+          data,
+          null,
+          2
+        )}</pre>`;
+      }
+
+      function updateView() {
+        document.querySelector("html").setAttribute("data-theme", themeMode);
+        document.querySelector("#appCode").innerHTML = appCode;
+        document.querySelector("#module").innerHTML = module;
+        document.querySelector("#plugPoint").innerHTML = plugPoint;
+        document.querySelector("#themeMode").innerHTML = themeMode;
+      }
+
+      // запрос кода авторизации
+      // может быть вызван сразу после рукопожатия в onHandshakeAction
+      function getAuthCode() {
+        postMessageController.getAuthCode();
+      }
+
+      // СОБЫТИЯ КНОПОК
+      document
+        .querySelector("#getAuthCodeButton")
+        .addEventListener("click", getAuthCode);
+
+      document
+        .querySelector("#getEntitiesButton")
+        .addEventListener("click", function () {
+          const actionId = getActionId();
+
+          callOnActionWithId(actionId, (data) => {
+            setOutput(data);
+          });
+
+          postPortMessage({ action: "data.get.entities", actionId });
+        });
+
+      document
+        .querySelector("#getUserInfoButton")
+        .addEventListener("click", function () {
+          const actionId = getActionId();
+
+          callOnActionWithId(actionId, (data) => {
+            setOutput(data);
+          });
+
+          postPortMessage({ action: "custom.get.userInfo", actionId });
+        });
+
+      document
+        .querySelector("#getActiveBusinessObjectButton")
+        .addEventListener("click", function () {
+          const actionId = getActionId();
+
+          callOnActionWithId(actionId, (data) => {
+            setOutput(data);
+          });
+
+          postPortMessage({
+            action: "data.get.activeBusinessObject",
+            actionId,
+          });
+        });
+
+      function onPortAction(data) {
+        const action = data.action;
+
+        if (action === "setAuthCode") {
+          setOutput(data);
+        }
+
+        if (action === "host.on.themeMode") {
+          themeMode = data.payload;
+          updateView();
+        }
+
+        if (action === "data.on.activeBusinessObject") {
+          setOutput(data);
+        }
+      }
+
+      // обработка ответа от платформы на рукопожатие
+      // в payload будут находиться заданные вами данные при создании scrm-iframe-wrapper
+      function onHandshakeAction(payload) {
+        if (!payload || typeof payload !== "object") {
+          return;
+        }
+
+        appCode = payload.appCode;
+        module = payload.module;
+        themeMode = payload.themeMode;
+        plugPoint = payload.plugPoint;
+
+        updateView();
+
+        // запрос кода авторизации (getAuthCode) может быть вызван сразу после рукопожатия
+      }
+
+      postMessageController.onHandshakeAction = onHandshakeAction;
+      postMessageController.onPortAction = onPortAction;
+      postMessageController.listenPostMessage();
+      postMessageController.postHandshake();
+    </script>
+  </body>
+</html>
