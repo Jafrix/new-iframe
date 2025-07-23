@@ -4,7 +4,7 @@ body {
   background-color: rgb(182, 181, 181);
 }
 
-.btn {
+.btn, .btn-dog {
   padding: 10px 20px;
   border-radius: 8px;
 }
@@ -21,6 +21,7 @@ h1 {
   font-size: 30px;
 }
 
-/* .fox-icon {
-  width: 10%;
-} */
+.btn-dog:hover {
+cursor: pointer;
+background-color: aquamarine;
+}
